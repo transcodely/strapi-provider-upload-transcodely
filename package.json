@@ -1,0 +1,75 @@
+{
+  "name": "strapi-provider-upload-transcodely",
+  "version": "0.1.0",
+  "description": "Strapi v5 upload provider that hosts video uploads on Transcodely and passes everything else to a fallback provider",
+  "license": "MIT",
+  "homepage": "https://github.com/transcodely/strapi-provider-upload-transcodely#readme",
+  "keywords": [
+    "strapi",
+    "strapi-provider",
+    "strapi-provider-upload",
+    "upload",
+    "video",
+    "transcoding",
+    "hls",
+    "transcodely"
+  ],
+  "author": {
+    "name": "Transcodely",
+    "email": "support@transcodely.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/transcodely/strapi-provider-upload-transcodely.git"
+  },
+  "bugs": {
+    "url": "https://github.com/transcodely/strapi-provider-upload-transcodely/issues"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./types": {
+      "types": "./dist/public-types.d.ts",
+      "require": "./dist/public-types.js",
+      "default": "./dist/public-types.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist dist-test",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "peerDependencies": {
+    "@strapi/strapi": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@strapi/strapi": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.36.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.44.0"
+  }
+}

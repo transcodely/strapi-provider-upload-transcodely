@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 5am on the first day of the month"],
+  "timezone": "Europe/Berlin",
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 3,
+  "packageRules": [
+    {
+      "description": "Batch the TypeScript/ESLint toolchain into one monthly PR.",
+      "matchPackageNames": ["typescript", "typescript-eslint", "eslint", "@eslint/js", "@types/node"],
+      "groupName": "build toolchain"
+    },
+    {
+      "description": "@strapi/strapi is a peer dependency; never widen the range automatically.",
+      "matchPackageNames": ["@strapi/strapi"],
+      "matchDepTypes": ["peerDependencies"],
+      "enabled": false
+    }
+  ]
+}
