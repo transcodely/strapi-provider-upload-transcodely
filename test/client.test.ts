@@ -222,7 +222,14 @@ describe('legacy app_id compatibility (delete with api 5.20.0)', () => {
       (error: unknown) => {
         assert.ok(error instanceof TranscodelyUploadError);
         assert.equal(error.code, 'app_id_required');
-        assert.match(error.message, /Set `appId` in the provider options/);
+        // Quoted verbatim in the README's "The app id" section; keep them in
+        // step, because it is the only instruction that unblocks the operator.
+        assert.equal(
+          error.message,
+          'This Transcodely deployment still requires an app id, and the account has no job ' +
+            'to read one from. Set `appId` in the provider options (it looks like ' +
+            'app_xxxxxxxxxx).',
+        );
         return true;
       },
     );

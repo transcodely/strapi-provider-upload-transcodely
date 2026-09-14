@@ -36,9 +36,11 @@ export interface TranscodelyProviderOptions {
   /**
    * App the videos are created under (`app_…`).
    *
-   * Normally unnecessary: an `ak_` key already names exactly one app, and from
-   * api 5.20.0 the upload RPCs resolve it. Set it to pin a specific app, or to
-   * skip the compatibility probe on a deployment older than 5.20.0.
+   * Usually unnecessary. The upload RPCs still require an `app_id` today, but
+   * the provider recovers by reading the app off the caller's most recent job;
+   * only an account with no jobs at all has to set this. From api 5.20.0 the
+   * RPCs resolve the app from the key and nothing is probed, leaving this as a
+   * way to pin a specific app.
    */
   appId?: string;
   /** Visibility for created videos. Defaults to `unlisted`. */

@@ -44,13 +44,17 @@ export interface CreateMultipartUploadResult {
 }
 
 /**
- * True when a refusal is a pre-5.20.0 server insisting on `app_id`.
+ * True when a refusal is a server insisting on `app_id`.
+ *
+ * This is the CURRENT behavior of the API, not a legacy edge: `app_id` is still
+ * protovalidate-`required` on the upload RPCs as of 5.19.0, so every key-only
+ * call is refused and every install takes this path once per provider instance.
  *
  * DELETE THIS together with `TranscodelyClient.discoverAppId` once every
- * environment runs api 5.20.0 or newer, where `app_id` is
- * `IGNORE_IF_ZERO_VALUE` on the upload RPCs.
+ * environment runs api 5.20.0 or newer, where `app_id` becomes
+ * `IGNORE_IF_ZERO_VALUE` and a key-only call simply works.
  *
- * An older server answers a key-only call with a protovalidate rejection:
+ * Such a server answers a key-only call with a protovalidate rejection:
  * Connect `invalid_argument` (HTTP 400), no error detail at all, the field
  * paths on the `x-validation-fields` header and repeated in the message. The
  * match is deliberately narrow — a 400 that does not name `app_id` is a real
@@ -159,13 +163,13 @@ export class TranscodelyClient {
    * DELETE THIS (and `isLegacyAppIdRequired`) once every environment this
    * provider talks to runs api 5.20.0 or newer.
    *
-   * Before 5.20.0, `app_id` was protovalidate-`required` on the upload RPCs even
-   * though the handler derived the app from the API key anyway, so a key-only
-   * call was rejected before the handler ran. Reading the app off the most
-   * recent job is the only self-discovery an app-scoped key has —
-   * `AppService.List` needs an org id the key holder does not know. It runs only
-   * after a server has actually refused a key-only call, so it retires itself
-   * the day the deployment upgrades; it is never on the happy path.
+   * Until then — and 5.19.0 is what is deployed today — `app_id` is
+   * protovalidate-`required` on the upload RPCs even though the handler derives
+   * the app from the API key anyway, so a key-only call is rejected before the
+   * handler runs. Reading the app off the most recent job is the only
+   * self-discovery an app-scoped key has: `AppService.List` needs an org id the
+   * key holder does not know. It runs only after a server has actually refused,
+   * so it stops firing the day the deployment upgrades.
    *
    * The result is cached on `resolvedAppId`, which is also the caller's guard —
    * so this runs at most once per provider instance.

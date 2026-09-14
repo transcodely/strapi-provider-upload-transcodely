@@ -4,8 +4,8 @@ import { after, describe, it } from 'node:test';
 import { TranscodelyClient } from '../src/client';
 import { resolveConfig } from '../src/config';
 import { TranscodelyUploadError } from '../src/errors';
-import { declaredByteSize, partCount, uploadVideo } from '../src/upload';
-import { chunkedStream, makeFile, makeVideoFile, pattern } from './helpers/file';
+import { ChunkReader, declaredByteSize, partCount, uploadVideo } from '../src/upload';
+import { chunkedStream, makeFile, makeVideoFile, manualStream, pattern } from './helpers/file';
 import { startMockServer } from './helpers/mock-server';
 import type { MockServer, MockServerOptions } from './helpers/mock-server';
 import type { TranscodelyProviderOptions } from '../src/config';
@@ -61,6 +61,29 @@ describe('partCount', () => {
     assert.equal(partCount(PART, PART), 1);
     assert.equal(partCount(PART + 1, PART), 2);
     assert.equal(partCount(PART * 3 - 1, PART), 3);
+  });
+});
+
+describe('ChunkReader', () => {
+  it('releases the underlying iterator on close', async () => {
+    // A Readable is torn down by stream.destroy(), but the reader accepts any
+    // async iterable, and a generator source is released only by return().
+    let released = false;
+    async function* source(): AsyncGenerator<Buffer> {
+      try {
+        yield Buffer.alloc(8);
+        yield Buffer.alloc(8);
+      } finally {
+        released = true;
+      }
+    }
+
+    const reader = new ChunkReader(source());
+    assert.equal((await reader.next(8)).length, 8);
+    assert.equal(released, false, 'still mid-iteration');
+
+    await reader.close();
+    assert.equal(released, true);
   });
 });
 
@@ -193,23 +216,31 @@ describe('uploadVideo', () => {
     assert.equal(server.aborted.length, 1);
   });
 
-  it('destroys the source stream on the failure path, not just on success', async () => {
+  it('releases a source stream abandoned mid-read when the upload fails', async () => {
     // The chunk reader drives the iterator by hand, so `for await`'s implicit
     // cleanup never runs. Strapi does not clean up either — it only deletes
     // file.stream after a successful await — and the source is a read stream
     // over a temp file, so an abandoned stream pins a file descriptor.
+    //
+    // Five parts against a concurrency of 3 means the first window fails with
+    // parts 4 and 5 still unread. That is what makes this test real: a stream
+    // read to the end is destroyed by Node itself, so a failure that happens
+    // to consume everything proves nothing about this provider.
     const { config, client } = await harness({ expirePartsOnce: [1, 1] });
-    const bytes = pattern(PART + 10);
-    const stream = chunkedStream(bytes, 4096);
+    const bytes = pattern(PART * 5);
+    const stream = manualStream(bytes, 4096);
 
     await assert.rejects(uploadVideo(config, client, makeVideoFile(bytes), { stream }));
+    assert.equal(stream.readableEnded, false, 'the stream really was left unfinished');
     assert.equal(stream.destroyed, true);
   });
 
-  it('destroys the source stream on the success path too', async () => {
+  it('releases a fully-read source stream the provider was handed', async () => {
+    // autoDestroy is off, so this asserts the provider's own release rather
+    // than Node's end-of-stream cleanup.
     const { config, client } = await harness();
     const bytes = pattern(PART + 10);
-    const stream = chunkedStream(bytes, 4096);
+    const stream = manualStream(bytes, 4096);
 
     await uploadVideo(config, client, makeVideoFile(bytes), { stream });
     assert.equal(stream.destroyed, true);

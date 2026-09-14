@@ -16,10 +16,12 @@ All notable changes to this project are documented here. The format follows
 - Writes the free MP4 hover preview into `formats.thumbnail.url` when the API has produced one,
   which is the only artifact Strapi's media-library card can play.
 - Pins the calendar API version `2026-05-03` on every request.
-- Uploads send no `app_id`: the API key already names its app and Transcodely API 5.20.0 resolves
-  it. `appId` stays available to pin an app explicitly. Against a deployment older than 5.20.0,
-  where the field was required, the provider recovers by reading the app off the most recent job
-  once and caching it — a path that runs only after a refusal and retires itself on upgrade.
+- Uploads send no `app_id`. **At the time of this release the Transcodely API still requires one**,
+  so the first upload after boot is refused and the provider recovers by reading the app off the
+  caller's most recent job, caching it for the life of the provider. An account with no jobs at all
+  has to set `appId`, and the error says so. From API 5.20.0 the upload endpoints resolve the app
+  from the key and the recovery path stops firing; it will be deleted in a later release of this
+  provider once 5.20.0 is everywhere.
 
 ### Notes from pre-release review
 

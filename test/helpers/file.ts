@@ -60,3 +60,27 @@ export function pattern(length: number, seed = 7): Buffer {
   }
   return buffer;
 }
+
+/**
+ * A stream that does NOT destroy itself when it ends.
+ *
+ * `Readable.from` auto-destroys on completion, so a test asserting
+ * `stream.destroyed` after a fully-consumed upload measures Node's cleanup
+ * rather than the provider's. This one only becomes destroyed if something
+ * actually destroys it.
+ */
+export function manualStream(bytes: Buffer, chunkSize: number): Readable {
+  let offset = 0;
+  return new Readable({
+    autoDestroy: false,
+    read() {
+      if (offset >= bytes.length) {
+        this.push(null);
+        return;
+      }
+      const end = Math.min(offset + chunkSize, bytes.length);
+      this.push(bytes.subarray(offset, end));
+      offset = end;
+    },
+  });
+}

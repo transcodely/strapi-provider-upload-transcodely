@@ -100,7 +100,7 @@ module.exports = [
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `apiKey` | string | — | **Required.** Secret API key (`ak_…`). |
-| `appId` | string | resolved from the key | App the videos are created under (`app_…`). Rarely needed, see below. |
+| `appId` | string | read from your latest job | App the videos are created under (`app_…`). Needed today only if the account has never run a job, see below. |
 | `baseUrl` | string | `https://api.transcodely.com` | API base URL. |
 | `playerBaseUrl` | string | `https://play.transcodely.com` | Base for composed player-page URLs. |
 | `visibility` | `public` \| `unlisted` \| `private` | the app's default | Visibility of created videos. Leave unset to use the app's `default_visibility` (itself `unlisted` when unset). |
@@ -120,15 +120,34 @@ module.exports = [
 
 ### The app id
 
-**You do not normally need one.** An `ak_` key already names exactly one app, and from Transcodely
-API 5.20.0 the upload endpoints resolve it from the key. The provider sends no `app_id` at all.
+**Today: set `appId` if your account has never run a job.** Everyone else can leave it out.
 
-Set `appId` only to pin a specific app explicitly, or to skip one extra request on a Transcodely
-deployment older than 5.20.0. On those older deployments `app_id` was a required field, and a
-key-only call is refused; the provider then reads the app off your most recent job once, caches it,
-and carries on. That compatibility path runs only after a server has actually refused, so it
-disappears on its own once the deployment upgrades. An account with no jobs yet gets an explicit
-error telling you to set the option.
+The provider sends no `app_id`. The Transcodely API currently still requires one on the upload
+endpoints, so it answers that first call with a validation error — and the provider recovers by
+reading your app off your most recent job, caching it, and carrying on. You will not notice, and it
+costs one extra request per Strapi boot.
+
+The exception is an account with **no jobs at all**, where there is nothing to read the app from.
+That upload fails with:
+
+```
+This Transcodely deployment still requires an app id, and the account has no job to read one
+from. Set `appId` in the provider options (it looks like app_xxxxxxxxxx).
+```
+
+Copy the app id from your Transcodely dashboard and add it:
+
+```js
+providerOptions: {
+  apiKey: env('TRANSCODELY_API_KEY'),
+  appId: env('TRANSCODELY_APP_ID'), // app_xxxxxxxxxx
+},
+```
+
+**From API 5.20.0** the upload endpoints resolve the app from the key on their own, an `ak_` key
+naming exactly one app. The key-only call then succeeds outright, nothing is ever probed, and
+`appId` becomes purely a way to pin a specific app. The recovery path above will be deleted in a
+later release of this provider, once 5.20.0 is everywhere.
 
 ### Keeping images on the local provider
 

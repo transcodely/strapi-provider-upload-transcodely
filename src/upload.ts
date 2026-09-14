@@ -52,13 +52,15 @@ export function partCount(sizeBytes: number, partSizeBytes: number): number {
  * produce, so a leftover has to be carried between calls; `carry` is that
  * leftover.
  */
-class ChunkReader {
+export class ChunkReader {
   private readonly iterator: AsyncIterator<Buffer>;
   private carry: Buffer = Buffer.alloc(0);
   private done = false;
 
-  constructor(stream: Readable) {
-    this.iterator = stream[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
+  constructor(source: AsyncIterable<Buffer> | Readable) {
+    this.iterator = (source as AsyncIterable<Buffer>)[
+      Symbol.asyncIterator
+    ]() as AsyncIterator<Buffer>;
   }
 
   /** Returns exactly `size` bytes, or fewer at end of stream. */
@@ -116,6 +118,10 @@ class ChunkReader {
    * runs `delete file.stream` after a successful await — and the source is an
    * `fs.createReadStream` over a temp file, so every failed upload would pin a
    * file descriptor and a temp file until GC.
+   *
+   * `iterator.return()` is the iterator protocol's own release, which is what a
+   * generator source needs; for a `Readable` the caller's `stream.destroy()`
+   * does the real work. Both run, because the reader takes either.
    */
   async close(): Promise<void> {
     this.done = true;
@@ -243,7 +249,8 @@ export async function uploadVideo(
 
   // No `app_id`: the API key already names exactly one app and the handler
   // resolves it. The client adds one only when the operator configured it, or
-  // when a pre-5.20.0 server has refused the key-only call.
+  // when the server has refused the key-only call — which every server before
+  // api 5.20.0 does, including the one deployed today.
   const request: Record<string, unknown> = {
     filename: file.name,
     content_type: file.mime,
