@@ -36,10 +36,9 @@ export interface TranscodelyProviderOptions {
   /**
    * App the videos are created under (`app_…`).
    *
-   * Temporary: `app_id` is still protovalidate-required on the upload RPCs even
-   * though an app-scoped key already names the app. When it is omitted the
-   * provider discovers it once from `JobService/List`. Delete this option once
-   * the API makes `app_id` optional (S10-pre).
+   * Normally unnecessary: an `ak_` key already names exactly one app, and from
+   * api 5.20.0 the upload RPCs resolve it. Set it to pin a specific app, or to
+   * skip the compatibility probe on a deployment older than 5.20.0.
    */
   appId?: string;
   /** Visibility for created videos. Defaults to `unlisted`. */

@@ -272,6 +272,33 @@ describe('uploadVideo', () => {
     assert.ok(!('visibility' in create.body));
   });
 
+  it('uploads with no app_id at all against a current server', async () => {
+    const { server, config, client } = await harness({}, { appId: undefined });
+    const bytes = pattern(PART + 512);
+
+    const { video } = await uploadVideo(config, client, makeVideoFile(bytes), { buffer: bytes });
+
+    const [create] = server.callsTo('VideoService/CreateMultipartUpload');
+    assert.ok(!('app_id' in create.body), 'the key names the app');
+    assert.equal(server.callsTo('JobService/List').length, 0);
+    assert.deepEqual(server.uploaded.get(video.id), bytes);
+  });
+
+  it('still uploads against a pre-5.20.0 server that insists on app_id', async () => {
+    const { server, config, client } = await harness(
+      { requireAppId: true, jobs: [{ id: 'job_1', app_id: 'app_from_job' }] },
+      { appId: undefined },
+    );
+    const bytes = pattern(PART + 512);
+
+    const { video } = await uploadVideo(config, client, makeVideoFile(bytes), { buffer: bytes });
+
+    const creates = server.callsTo('VideoService/CreateMultipartUpload');
+    assert.equal(creates.length, 2, 'key-only attempt, then the retry');
+    assert.equal(creates[1].body.app_id, 'app_from_job');
+    assert.deepEqual(server.uploaded.get(video.id), bytes);
+  });
+
   it('surfaces the API’s own error when app_id is missing', async () => {
     const { config, client } = await harness({ requireAppId: true, jobs: [] }, { appId: undefined });
     const bytes = pattern(1024);

@@ -14,6 +14,8 @@ export interface ApiErrorInfo {
   code: string;
   message: string;
   statusCode: number;
+  /** Field paths the API named as invalid, when it named any. */
+  fields: string[];
 }
 
 const STATUS_FALLBACKS: Record<number, { code: string; message: string }> = {
@@ -31,12 +33,18 @@ const STATUS_FALLBACKS: Record<number, { code: string; message: string }> = {
 export class TranscodelyUploadError extends Error {
   readonly code: string;
   readonly statusCode?: number;
+  /** Field paths the API named as invalid, when it named any. */
+  readonly fields: string[];
 
-  constructor(message: string, options: { code?: string; statusCode?: number; cause?: unknown } = {}) {
+  constructor(
+    message: string,
+    options: { code?: string; statusCode?: number; fields?: string[]; cause?: unknown } = {},
+  ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'TranscodelyUploadError';
     this.code = options.code ?? 'provider_error';
     this.statusCode = options.statusCode;
+    this.fields = options.fields ?? [];
   }
 }
 
@@ -59,13 +67,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * message and into the `x-validation-fields` response header, which is why
  * `describeApiError` reads that header separately.
  */
-function fieldViolations(body: Record<string, unknown>): string[] {
+function fieldViolations(body: Record<string, unknown>): Array<{ field: string; text: string }> {
   const details = body.details;
   if (!Array.isArray(details)) {
     return [];
   }
 
-  const messages: string[] = [];
+  const found: Array<{ field: string; text: string }> = [];
   for (const detail of details) {
     if (!isRecord(detail)) {
       continue;
@@ -84,13 +92,13 @@ function fieldViolations(body: Record<string, unknown>): string[] {
       const field = typeof violation.field === 'string' ? violation.field : '';
       const description = typeof violation.description === 'string' ? violation.description : '';
       if (field && description) {
-        messages.push(`${field}: ${description}`);
+        found.push({ field, text: `${field}: ${description}` });
       } else if (description) {
-        messages.push(description);
+        found.push({ field, text: description });
       }
     }
   }
-  return messages;
+  return found;
 }
 
 /**
@@ -120,20 +128,27 @@ export function describeApiError(
   let message =
     typeof parsed.message === 'string' && parsed.message ? parsed.message : fallback.message;
 
+  // protovalidate rejections attach no detail at all — the offending field
+  // paths ride the `x-validation-fields` header instead. Domain errors carry
+  // them inside the detail. Both are collected, because callers branch on the
+  // field (the app_id compatibility path is the live example).
+  const headerFields = (headers?.get('x-validation-fields') ?? '')
+    .split(',')
+    .map((f) => f.trim())
+    .filter((f) => f !== '');
+
   const violations = fieldViolations(parsed);
   if (violations.length > 0) {
-    message = `${message} (${violations.join('; ')})`;
-  } else {
-    // protovalidate rejections attach no detail at all — the offending field
-    // paths ride this header instead. The message already names them, so this
-    // is only appended when it would add something.
-    const fields = headers?.get('x-validation-fields') ?? '';
-    if (fields !== '' && !message.includes(fields.split(',')[0])) {
-      message = `${message} (fields: ${fields})`;
-    }
+    message = `${message} (${violations.map((v) => v.text).join('; ')})`;
+  } else if (headerFields.length > 0 && !message.includes(headerFields[0])) {
+    message = `${message} (fields: ${headerFields.join(',')})`;
   }
 
-  return { code, message, statusCode };
+  const fields = [
+    ...new Set([...headerFields, ...violations.map((v) => v.field).filter((f) => f !== '')]),
+  ];
+
+  return { code, message, statusCode, fields };
 }
 
 /** One-line summary suitable for a thrown error's message. */

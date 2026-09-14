@@ -240,10 +240,11 @@ export async function uploadVideo(
 
   const partSize = config.partSizeBytes;
   const totalParts = partCount(declared, partSize);
-  const appId = await client.appId();
 
+  // No `app_id`: the API key already names exactly one app and the handler
+  // resolves it. The client adds one only when the operator configured it, or
+  // when a pre-5.20.0 server has refused the key-only call.
   const request: Record<string, unknown> = {
-    app_id: appId,
     filename: file.name,
     content_type: file.mime,
     size_bytes: declared,

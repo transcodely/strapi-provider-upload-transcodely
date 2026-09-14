@@ -43,6 +43,29 @@ export interface CreateMultipartUploadResult {
   parts: UploadPart[];
 }
 
+/**
+ * True when a refusal is a pre-5.20.0 server insisting on `app_id`.
+ *
+ * DELETE THIS together with `TranscodelyClient.discoverAppId` once every
+ * environment runs api 5.20.0 or newer, where `app_id` is
+ * `IGNORE_IF_ZERO_VALUE` on the upload RPCs.
+ *
+ * An older server answers a key-only call with a protovalidate rejection:
+ * Connect `invalid_argument` (HTTP 400), no error detail at all, the field
+ * paths on the `x-validation-fields` header and repeated in the message. The
+ * match is deliberately narrow — a 400 that does not name `app_id` is a real
+ * validation failure and must surface as one.
+ */
+export function isLegacyAppIdRequired(error: unknown): boolean {
+  if (!(error instanceof TranscodelyUploadError) || error.statusCode !== 400) {
+    return false;
+  }
+  if (error.fields.includes('app_id')) {
+    return true;
+  }
+  return /\bapp_id\b/.test(error.message) && /required/i.test(error.message);
+}
+
 /** Minimal Connect-RPC client for the handful of procedures this provider uses. */
 export class TranscodelyClient {
   private readonly config: ResolvedConfig;
@@ -93,6 +116,7 @@ export class TranscodelyClient {
       throw new TranscodelyUploadError(formatApiError(`${service}.${method}`, info), {
         code: info.code,
         statusCode: info.statusCode,
+        fields: info.fields,
       });
     }
 
@@ -100,38 +124,67 @@ export class TranscodelyClient {
   }
 
   /**
-   * Returns the app id the upload RPCs must carry.
+   * Creates the multipart upload, sending `app_id` only when there is a reason to.
    *
-   * `app_id` is protovalidate-required on `CreateMultipartUploadRequest` even
-   * though the handler derives the app from the API key anyway, so a key-only
-   * configuration is rejected before the handler runs. Until that changes
-   * (S10-pre), read the app off the most recent job — the only self-discovery
-   * an app-scoped key has, since `AppService.List` needs an org id the key
-   * holder does not know. Resolved once per provider instance.
+   * The primary path is key-only: an `ak_` key already names exactly one app,
+   * and the handler resolves it. `app_id` is sent when the operator configured
+   * one, or when a server too old to accept its absence has already told us it
+   * needs one.
    */
-  async appId(): Promise<string> {
-    if (this.resolvedAppId !== '') {
-      return this.resolvedAppId;
-    }
+  async createMultipartUpload(body: Record<string, unknown>): Promise<CreateMultipartUploadResult> {
+    const known = this.resolvedAppId;
+    const request = known === '' ? body : { ...body, app_id: known };
 
+    try {
+      return await this.call<CreateMultipartUploadResult>(
+        'VideoService',
+        'CreateMultipartUpload',
+        request,
+      );
+    } catch (error) {
+      // Only a key-only attempt can be rescued: if an app_id was sent and the
+      // server still objected, the configured value is the problem.
+      if (known !== '' || !isLegacyAppIdRequired(error)) {
+        throw error;
+      }
+      const discovered = await this.discoverAppId();
+      return this.call<CreateMultipartUploadResult>('VideoService', 'CreateMultipartUpload', {
+        ...body,
+        app_id: discovered,
+      });
+    }
+  }
+
+  /**
+   * DELETE THIS (and `isLegacyAppIdRequired`) once every environment this
+   * provider talks to runs api 5.20.0 or newer.
+   *
+   * Before 5.20.0, `app_id` was protovalidate-`required` on the upload RPCs even
+   * though the handler derived the app from the API key anyway, so a key-only
+   * call was rejected before the handler ran. Reading the app off the most
+   * recent job is the only self-discovery an app-scoped key has —
+   * `AppService.List` needs an org id the key holder does not know. It runs only
+   * after a server has actually refused a key-only call, so it retires itself
+   * the day the deployment upgrades; it is never on the happy path.
+   *
+   * The result is cached on `resolvedAppId`, which is also the caller's guard —
+   * so this runs at most once per provider instance.
+   */
+  private async discoverAppId(): Promise<string> {
     const response = await this.call<{ jobs?: Array<{ app_id?: string }> }>('JobService', 'List', {
       pagination: { limit: 1 },
     });
     const discovered = response.jobs?.[0]?.app_id ?? '';
     if (discovered === '') {
       throw new TranscodelyUploadError(
-        'Could not determine which Transcodely app to upload to. Set `appId` in the ' +
-          'provider options (it looks like app_xxxxxxxxxx).',
+        'This Transcodely deployment still requires an app id, and the account has no job to ' +
+          'read one from. Set `appId` in the provider options (it looks like app_xxxxxxxxxx).',
         { code: 'app_id_required' },
       );
     }
 
     this.resolvedAppId = discovered;
     return discovered;
-  }
-
-  async createMultipartUpload(body: Record<string, unknown>): Promise<CreateMultipartUploadResult> {
-    return this.call<CreateMultipartUploadResult>('VideoService', 'CreateMultipartUpload', body);
   }
 
   async getUploadPartUrls(

@@ -47,7 +47,10 @@ export interface MockServerOptions {
    * the "one refresh, then give up" path.
    */
   expirePartsOnce?: number[];
-  /** Fail `CreateMultipartUpload` unless an app_id is present. */
+  /**
+   * Model a pre-5.20.0 server: refuse `CreateMultipartUpload` unless `app_id`
+   * is present, exactly as protovalidate's `required` rule did.
+   */
   requireAppId?: boolean;
   /** Answer `CreateMultipartUpload` with a video but no upload id. */
   omitUploadId?: boolean;

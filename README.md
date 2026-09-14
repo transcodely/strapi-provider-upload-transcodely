@@ -35,7 +35,6 @@ module.exports = ({ env }) => ({
       provider: 'strapi-provider-upload-transcodely',
       providerOptions: {
         apiKey: env('TRANSCODELY_API_KEY'),
-        appId: env('TRANSCODELY_APP_ID'), // see "The app id" below
       },
       actionOptions: {
         upload: {},
@@ -51,7 +50,6 @@ module.exports = ({ env }) => ({
 
 ```
 TRANSCODELY_API_KEY=ak_your_secret_key
-TRANSCODELY_APP_ID=app_xxxxxxxxxx
 ```
 
 The API key is a **secret** server-side key. It never leaves your Strapi server: uploads are
@@ -102,7 +100,7 @@ module.exports = [
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `apiKey` | string | — | **Required.** Secret API key (`ak_…`). |
-| `appId` | string | discovered | App the videos are created under (`app_…`). See below. |
+| `appId` | string | resolved from the key | App the videos are created under (`app_…`). Rarely needed, see below. |
 | `baseUrl` | string | `https://api.transcodely.com` | API base URL. |
 | `playerBaseUrl` | string | `https://play.transcodely.com` | Base for composed player-page URLs. |
 | `visibility` | `public` \| `unlisted` \| `private` | the app's default | Visibility of created videos. Leave unset to use the app's `default_visibility` (itself `unlisted` when unset). |
@@ -122,15 +120,15 @@ module.exports = [
 
 ### The app id
 
-`appId` is currently **effectively required**. The API's upload RPCs still declare `app_id` as a
-required field even though an app-scoped key already names the app, so a key-only call is rejected
-before the handler runs.
+**You do not normally need one.** An `ak_` key already names exactly one app, and from Transcodely
+API 5.20.0 the upload endpoints resolve it from the key. The provider sends no `app_id` at all.
 
-When `appId` is omitted the provider reads it once from your most recent job
-(`JobService.List`) — the only self-discovery an app-scoped key has. A brand-new account with no
-jobs yet gets an explicit error telling you to fill the field in.
-
-This option goes away once the API makes `app_id` optional on the upload RPCs.
+Set `appId` only to pin a specific app explicitly, or to skip one extra request on a Transcodely
+deployment older than 5.20.0. On those older deployments `app_id` was a required field, and a
+key-only call is refused; the provider then reads the app off your most recent job once, caches it,
+and carries on. That compatibility path runs only after a server has actually refused, so it
+disappears on its own once the deployment upgrades. An account with no jobs yet gets an explicit
+error telling you to set the option.
 
 ### Keeping images on the local provider
 
@@ -140,7 +138,6 @@ Strapi project already ships. To keep images on S3 instead:
 ```js
 providerOptions: {
   apiKey: env('TRANSCODELY_API_KEY'),
-  appId: env('TRANSCODELY_APP_ID'),
   fallbackProvider: 'aws-s3',
   fallbackProviderOptions: {
     s3Options: { /* … the aws-s3 provider's own options … */ },
@@ -269,7 +266,6 @@ signed and expires. So use it **with `private: true`**:
 ```js
 providerOptions: {
   apiKey: env('TRANSCODELY_API_KEY'),
-  appId: env('TRANSCODELY_APP_ID'),
   playbackUrlKind: 'hls',
   private: true,
 }

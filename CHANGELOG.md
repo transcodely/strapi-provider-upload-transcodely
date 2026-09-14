@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
 - Writes the free MP4 hover preview into `formats.thumbnail.url` when the API has produced one,
   which is the only artifact Strapi's media-library card can play.
 - Pins the calendar API version `2026-05-03` on every request.
+- Uploads send no `app_id`: the API key already names its app and Transcodely API 5.20.0 resolves
+  it. `appId` stays available to pin an app explicitly. Against a deployment older than 5.20.0,
+  where the field was required, the provider recovers by reading the app off the most recent job
+  once and caching it — a path that runs only after a refusal and retires itself on upgrade.
 
 ### Notes from pre-release review
 
