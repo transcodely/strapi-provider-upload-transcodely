@@ -191,6 +191,23 @@ export function resolveConfig(options: TranscodelyProviderOptions = {}): Resolve
     throw configError('apiKey is required (a secret ak_… key)');
   }
 
+  // Only an app-scoped API key may drive this provider, and the check is
+  // PERMANENT — it is not part of the pre-5.20.0 compatibility block.
+  //
+  // An `ak_` key names exactly one app, and every app-resolving path the API
+  // has is force-scoped to it. A portal session token is not: `JobService.List`
+  // answers it with the whole org's jobs, and from 5.20.0 an upload that omits
+  // `app_id` "selects the org's first active app". Either way a mis-pasted
+  // credential would upload into an arbitrary app of the org, silently and
+  // across an app boundary. Refusing at boot turns that into one legible error.
+  if (!/^ak_/.test(apiKey)) {
+    throw configError(
+      'apiKey must be an app-scoped API key, which starts with "ak_". A portal session token ' +
+        'or any other credential is refused: it does not name a single app, so uploads could ' +
+        'land in the wrong one.',
+    );
+  }
+
   const appId = (options.appId ?? '').trim();
   if (appId !== '' && !/^app_[a-zA-Z0-9_-]+$/.test(appId)) {
     throw configError(`appId "${appId}" does not look like an app id (app_…)`);

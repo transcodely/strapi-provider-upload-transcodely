@@ -235,6 +235,68 @@ describe('legacy app_id compatibility (delete with api 5.20.0)', () => {
     );
   });
 
+  it('asks for two jobs, so a disagreement is detectable at all', async () => {
+    const server = await withServer({
+      requireAppId: true,
+      jobs: [{ id: 'job_1', app_id: 'app_from_job' }],
+    });
+    const client = new TranscodelyClient(
+      resolveConfig({ apiKey: 'ak_secret', baseUrl: server.baseUrl }),
+    );
+
+    await client.createMultipartUpload({ filename: 'a.mp4', total_parts: 1 });
+
+    const [list] = server.callsTo('JobService/List');
+    assert.deepEqual(list.body, { pagination: { limit: 2 } });
+  });
+
+  it('refuses rather than guessing when the jobs name different apps', async () => {
+    // Unreachable with an ak_ key, which the API force-scopes to one app — this
+    // is the defence in depth behind that, because the wrong answer would cross
+    // an app boundary silently.
+    const server = await withServer({
+      requireAppId: true,
+      jobs: [
+        { id: 'job_newest', app_id: 'app_newest0001' },
+        { id: 'job_older', app_id: 'app_other00002' },
+      ],
+    });
+    const client = new TranscodelyClient(
+      resolveConfig({ apiKey: 'ak_secret', baseUrl: server.baseUrl }),
+    );
+
+    await assert.rejects(
+      client.createMultipartUpload({ filename: 'a.mp4', total_parts: 1 }),
+      (error: unknown) => {
+        assert.ok(error instanceof TranscodelyUploadError);
+        assert.equal(error.code, 'app_id_required');
+        assert.match(error.message, /jobs from more than one app/);
+        return true;
+      },
+    );
+
+    // The upload is refused outright, not completed into a guessed app.
+    assert.equal(server.callsTo('VideoService/CreateMultipartUpload').length, 1);
+  });
+
+  it('accepts two jobs that agree', async () => {
+    const server = await withServer({
+      requireAppId: true,
+      jobs: [
+        { id: 'job_1', app_id: 'app_from_job' },
+        { id: 'job_2', app_id: 'app_from_job' },
+      ],
+    });
+    const client = new TranscodelyClient(
+      resolveConfig({ apiKey: 'ak_secret', baseUrl: server.baseUrl }),
+    );
+
+    await client.createMultipartUpload({ filename: 'a.mp4', total_parts: 1 });
+
+    const creates = server.callsTo('VideoService/CreateMultipartUpload');
+    assert.equal(creates[1].body.app_id, 'app_from_job');
+  });
+
   it('does not retry a 400 about anything other than app_id', async () => {
     // The fallback must be narrow: a real validation failure has to surface as
     // one rather than sending the caller through a pointless app lookup.

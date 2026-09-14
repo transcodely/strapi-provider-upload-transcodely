@@ -149,7 +149,13 @@ export async function startMockServer(options: MockServerOptions = {}): Promise<
 
     switch (procedure) {
       case 'JobService/List': {
-        send(res, 200, { jobs: options.jobs ?? [], pagination: { next_cursor: '' } });
+        // The limit is honoured, so a caller asking for one job cannot see a
+        // second and a test cannot accidentally prove more than the wire does.
+        const limit = Number(body?.pagination?.limit ?? 20);
+        send(res, 200, {
+          jobs: (options.jobs ?? []).slice(0, limit),
+          pagination: { next_cursor: '' },
+        });
         return;
       }
 

@@ -35,6 +35,21 @@ describe('resolveConfig', () => {
     assert.throws(() => resolveConfig({ apiKey: '   ' }), /apiKey is required/);
   });
 
+  it('refuses any credential that is not an app-scoped ak_ key', () => {
+    // A portal session token is the realistic mis-paste. It is not scoped to
+    // one app, so every app-resolving path the API has would pick an arbitrary
+    // app of the org — silently, and across an app boundary.
+    const jwt =
+      'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c3JfMSJ9.c2lnbmF0dXJl';
+    assert.throws(() => resolveConfig({ apiKey: jwt }), /must be an app-scoped API key/);
+    assert.throws(() => resolveConfig({ apiKey: 'sk_live_123' }), /must be an app-scoped API key/);
+    assert.throws(() => resolveConfig({ apiKey: 'AK_uppercase' }), /must be an app-scoped API key/);
+
+    assert.equal(resolveConfig({ apiKey: 'ak_a1b2c3d4e5' }).apiKey, 'ak_a1b2c3d4e5');
+    // Surrounding whitespace from a copy-paste is trimmed before the check.
+    assert.equal(resolveConfig({ apiKey: '  ak_a1b2c3d4e5  ' }).apiKey, 'ak_a1b2c3d4e5');
+  });
+
   it('rejects a malformed app id', () => {
     assert.throws(() => resolveConfig({ apiKey: 'ak_test', appId: 'nope' }), /does not look like/);
     assert.equal(resolveConfig({ apiKey: 'ak_test', appId: 'app_k1l2m3n4o5' }).appId, 'app_k1l2m3n4o5');

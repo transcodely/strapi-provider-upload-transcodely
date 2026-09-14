@@ -57,6 +57,12 @@ streamed from Strapi to presigned storage URLs, and nothing in the admin panel o
 ever sees it. `baseUrl` must be `https://` unless it is loopback, because that key rides an
 `Authorization` header on every request.
 
+It has to be an **app-scoped API key** — the kind that starts with `ak_`. Anything else is refused
+when Strapi boots, with a message saying so. That is not pedantry about formats: an `ak_` key names
+exactly one app, and every way this provider resolves an app leans on that. A portal session token
+names a whole organization instead, so a mis-pasted one would upload into whichever app of yours the
+API happened to pick, silently and across an app boundary.
+
 You do not have to turn managed hosting on for the app first. Asking Transcodely to store a video
 *is* the request to be hosted, so the first upload provisions the app's bucket, managed origin and
 CDN pull zone on the way through. That first upload therefore takes a few seconds longer than the
@@ -99,7 +105,7 @@ module.exports = [
 
 | Option | Type | Default | What it does |
 |---|---|---|---|
-| `apiKey` | string | — | **Required.** Secret API key (`ak_…`). |
+| `apiKey` | string | — | **Required.** Secret app-scoped API key. Must start with `ak_`; any other credential is refused at boot. |
 | `appId` | string | read from your latest job | App the videos are created under (`app_…`). Needed today only if the account has never run a job, see below. |
 | `baseUrl` | string | `https://api.transcodely.com` | API base URL. |
 | `playerBaseUrl` | string | `https://play.transcodely.com` | Base for composed player-page URLs. |
@@ -128,7 +134,8 @@ reading your app off your most recent job, caching it, and carrying on. You will
 costs one extra request per Strapi boot.
 
 The exception is an account with **no jobs at all**, where there is nothing to read the app from.
-That upload fails with:
+(The provider reads two jobs rather than one and refuses if they name different apps, so it never
+guesses.) That upload fails with:
 
 ```
 This Transcodely deployment still requires an app id, and the account has no job to read one

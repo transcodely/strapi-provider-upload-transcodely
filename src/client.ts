@@ -175,20 +175,42 @@ export class TranscodelyClient {
    * so this runs at most once per provider instance.
    */
   private async discoverAppId(): Promise<string> {
+    // Two jobs, not one, purely so disagreement is detectable. `resolveConfig`
+    // already refuses anything but an `ak_` key, and the API force-scopes an
+    // API-key caller's job list to that key's single app, so these two should
+    // always name the same app. If they ever do not, the premise of this whole
+    // path is wrong and guessing would cross an app boundary silently — which
+    // is the one failure shape worth paying an extra row to rule out.
     const response = await this.call<{ jobs?: Array<{ app_id?: string }> }>('JobService', 'List', {
-      pagination: { limit: 1 },
+      pagination: { limit: 2 },
     });
-    const discovered = response.jobs?.[0]?.app_id ?? '';
-    if (discovered === '') {
+
+    const seen = [
+      ...new Set(
+        (response.jobs ?? [])
+          .map((job) => job.app_id ?? '')
+          .filter((appId): appId is string => appId !== ''),
+      ),
+    ];
+
+    if (seen.length === 0) {
       throw new TranscodelyUploadError(
         'This Transcodely deployment still requires an app id, and the account has no job to ' +
           'read one from. Set `appId` in the provider options (it looks like app_xxxxxxxxxx).',
         { code: 'app_id_required' },
       );
     }
+    if (seen.length > 1) {
+      throw new TranscodelyUploadError(
+        'This Transcodely deployment still requires an app id, and the credential can see jobs ' +
+          'from more than one app, so the right one cannot be guessed. Set `appId` in the ' +
+          'provider options (it looks like app_xxxxxxxxxx).',
+        { code: 'app_id_required' },
+      );
+    }
 
-    this.resolvedAppId = discovered;
-    return discovered;
+    this.resolvedAppId = seen[0];
+    return seen[0];
   }
 
   async getUploadPartUrls(

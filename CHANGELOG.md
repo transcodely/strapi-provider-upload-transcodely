@@ -23,6 +23,9 @@ All notable changes to this project are documented here. The format follows
   from the key and the recovery path stops firing; it will be deleted in a later release of this
   provider once 5.20.0 is everywhere.
 
+- `apiKey` must be an app-scoped key (`ak_…`); any other credential is refused when Strapi boots.
+  An `ak_` key names exactly one app, which is what every app-resolving path here depends on.
+
 ### Notes from pre-release review
 
 Fixed before the first publish, listed because each is a trap for anyone writing a similar
@@ -40,3 +43,6 @@ provider:
   isolated layout finds `@strapi/provider-upload-local`.
 - Streams are destroyed on every exit path, and part buffers are no longer copied on the way into
   `fetch`.
+- A credential that is not an `ak_` key would have resolved to an arbitrary app of the organization
+  rather than failing, so the prefix is now checked at boot and app discovery refuses to guess when
+  the jobs it reads name more than one app.
