@@ -39,13 +39,56 @@ describe('describeApiError', () => {
     assert.equal(info.message, 'Hosting could not be provisioned');
   });
 
-  it('appends protovalidate field violations to the message', () => {
+  it('reads violations out of a real connect-go error detail', () => {
+    // connect-go serialises a detail as {type, value: base64, debug: protojson},
+    // so the violations live under `debug` in protojson's camelCase — NOT at
+    // the top level of the entry and NOT in the API's snake_case wire casing.
+    const info = describeApiError(404, new Headers(), {
+      code: 'not_found',
+      message: 'Preset not found',
+      details: [
+        {
+          type: 'transcodely.v1.ErrorDetails',
+          value: 'CgtyZXNvdXJjZV9lcnJvcg',
+          debug: {
+            code: 'resource_error',
+            message: 'Preset not found',
+            fieldViolations: [{ field: 'preset', description: '[not_found] no such preset' }],
+          },
+        },
+      ],
+    });
+    assert.equal(info.message, 'Preset not found (preset: [not_found] no such preset)');
+  });
+
+  it('also accepts snake_case violations, in case a proxy rewrote the envelope', () => {
     const info = describeApiError(400, new Headers(), {
       code: 'invalid_argument',
-      message: 'validation failed',
-      details: [{ field_violations: [{ field: 'app_id', description: 'value is required' }] }],
+      message: 'Validation failed',
+      details: [
+        { debug: { field_violations: [{ field: 'outputs[0].crf', description: 'out of range' }] } },
+      ],
     });
-    assert.equal(info.message, 'validation failed (app_id: value is required)');
+    assert.equal(info.message, 'Validation failed (outputs[0].crf: out of range)');
+  });
+
+  it('falls back to the x-validation-fields header, which is all protovalidate sends', () => {
+    // The api's validation interceptor attaches NO detail: it flattens every
+    // violation into the message and sets this header.
+    const info = describeApiError(
+      400,
+      new Headers({ 'x-validation-fields': 'app_id,filename' }),
+      { code: 'invalid_argument', message: 'validation failed: app_id: value is required' },
+    );
+    assert.equal(info.code, 'invalid_argument');
+    // app_id is already named in the message, so nothing is appended.
+    assert.equal(info.message, 'validation failed: app_id: value is required');
+
+    const bare = describeApiError(400, new Headers({ 'x-validation-fields': 'total_parts' }), {
+      code: 'invalid_argument',
+      message: 'validation failed',
+    });
+    assert.equal(bare.message, 'validation failed (fields: total_parts)');
   });
 
   it('falls back to a status-derived code and message for an empty body', () => {

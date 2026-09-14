@@ -7,6 +7,7 @@ export interface FallbackStub extends StrapiUploadProviderModule {
   streamUploads: StrapiFile[];
   deletes: StrapiFile[];
   signed: StrapiFile[];
+  sizeChecks: Array<{ file: StrapiFile; options?: { sizeLimit?: number } }>;
   initOptions: Record<string, unknown> | undefined;
 }
 
@@ -18,9 +19,24 @@ export interface FallbackStub extends StrapiUploadProviderModule {
  * tests hand a module object in through `fallbackProvider` instead — which is
  * itself a supported configuration, not a test-only back door.
  */
-export function createFallbackStub(
-  options: { withUpload?: boolean; withUploadStream?: boolean; withSignedUrl?: boolean } = {},
-): FallbackStub {
+export interface FallbackStubOptions {
+  withUpload?: boolean;
+  withUploadStream?: boolean;
+  withSignedUrl?: boolean;
+  /**
+   * Whether the stub implements `checkFileSize` at all.
+   *
+   * **Default false, deliberately.** `@strapi/provider-upload-aws-s3` — the
+   * fallback the README recommends for images — does not implement it, and a
+   * stub that always did is exactly what hid the bug where delegating to it
+   * turned Strapi's `sizeLimit` off for every non-video.
+   */
+  withCheckFileSize?: boolean;
+  /** Whether the stub implements `isPrivate`, and what it answers. */
+  isPrivate?: boolean;
+}
+
+export function createFallbackStub(options: FallbackStubOptions = {}): FallbackStub {
   const withUpload = options.withUpload ?? true;
   const withUploadStream = options.withUploadStream ?? true;
 
@@ -29,6 +45,7 @@ export function createFallbackStub(
     streamUploads: [],
     deletes: [],
     signed: [],
+    sizeChecks: [],
     initOptions: undefined,
     init(initOptions?: Record<string, unknown>): StrapiUploadProvider {
       stub.initOptions = initOptions;
@@ -65,9 +82,15 @@ export function createFallbackStub(
           return { url: `${file.url}?stub-signature=1` };
         };
       }
-      provider.checkFileSize = () => {
-        /* the stub never refuses; the tests assert on our own ceiling */
-      };
+      if (options.withCheckFileSize) {
+        provider.checkFileSize = (file: StrapiFile, opts?: { sizeLimit?: number }) => {
+          stub.sizeChecks.push({ file, options: opts });
+        };
+      }
+      if (options.isPrivate !== undefined) {
+        const answer = options.isPrivate;
+        provider.isPrivate = () => answer;
+      }
       return provider;
     },
   };

@@ -55,7 +55,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepack": "npm run clean && npm run build"
   },
   "peerDependencies": {
     "@strapi/strapi": "^5.0.0"

@@ -106,6 +106,26 @@ class ChunkReader {
     }
     return this.carry.length === 0;
   }
+
+  /**
+   * Releases the source.
+   *
+   * Driving the iterator by hand means `for await`'s implicit cleanup never
+   * runs, so a throw mid-upload would leave the Readable paused and
+   * undestroyed. Strapi does not clean up either — `services/provider.js` only
+   * runs `delete file.stream` after a successful await — and the source is an
+   * `fs.createReadStream` over a temp file, so every failed upload would pin a
+   * file descriptor and a temp file until GC.
+   */
+  async close(): Promise<void> {
+    this.done = true;
+    this.carry = Buffer.alloc(0);
+    try {
+      await this.iterator.return?.();
+    } catch {
+      // Closing a source that is already torn down is not an error.
+    }
+  }
 }
 
 function toBuffer(value: unknown): Buffer {
@@ -123,6 +143,8 @@ interface PartSource {
   next(index: number): Promise<Buffer>;
   /** Called after the last part; throws if the source did not hold exactly the declared bytes. */
   verifyExhausted(): Promise<void>;
+  /** Always called, success or failure, so a stream is never left dangling. */
+  close(): Promise<void>;
 }
 
 function bufferSource(buffer: Buffer, partSize: number): PartSource {
@@ -132,6 +154,9 @@ function bufferSource(buffer: Buffer, partSize: number): PartSource {
     },
     async verifyExhausted() {
       /* The buffer's length was the declared size by construction. */
+    },
+    async close() {
+      /* Nothing to release. */
     },
   };
 }
@@ -161,17 +186,28 @@ function streamSource(stream: Readable, partSize: number, declared: number): Par
         { code: 'size_mismatch' },
       );
     },
+    async close() {
+      await reader.close();
+      stream.destroy();
+    },
   };
 }
 
 /**
  * Creates a hosted video from a Strapi file and returns it once the bytes are in.
  *
- * The path is `CreateMultipartUpload` (which also enables managed hosting on the
- * app the first time), a PUT of every part to its presigned URL, then
- * `CompleteMultipartUpload`. Any failure aborts the multipart upload, which also
- * soft-deletes the half-made video record, so a failed Strapi upload leaves
- * nothing behind.
+ * The path is `CreateMultipartUpload`, a PUT of every part to its presigned
+ * URL, then `CompleteMultipartUpload`. Any failure aborts the multipart upload,
+ * which also soft-deletes the half-made video record, so a failed Strapi upload
+ * leaves nothing behind.
+ *
+ * `CreateMultipartUpload` turns managed hosting on for the app if it is not on
+ * already — asking to store a video IS the request to be hosted, so there is no
+ * `AppService.EnableHosting` round trip to make first. The cost is that the
+ * first upload for an app provisions a bucket, a managed origin and a CDN pull
+ * zone, so it takes a few seconds longer and can come back
+ * `hosting_provisioning_failed`; that answer creates no video and is safe to
+ * retry unchanged.
  *
  * Parts are produced lazily and in order, then PUT in windows — the file is
  * never held in memory in full. Peak memory is `partSizeBytes ×
@@ -227,8 +263,14 @@ export async function uploadVideo(
   const videoId = created.video?.id;
   const uploadId = created.upload_id;
   if (!videoId || !uploadId) {
+    // A response carrying a video id but no upload id would otherwise strand
+    // that video in "uploading" forever. Abort needs the upload id, so the
+    // cleanup here is a delete — the only lever that works without one.
+    if (videoId) {
+      await client.deleteVideo(videoId).catch(() => undefined);
+    }
     throw new TranscodelyUploadError(
-      'Transcodely did not return a video id for the multipart upload',
+      'Transcodely did not return a video id and upload id for the multipart upload',
       { code: 'unexpected_response' },
     );
   }
@@ -287,6 +329,11 @@ export async function uploadVideo(
       /* deliberately ignored — see above */
     }
     throw error;
+  } finally {
+    // Runs on the success path too: the source is fully read by then, and
+    // releasing it is what keeps Strapi's temp-file descriptor from outliving
+    // the request on every failure path.
+    await parts.close();
   }
 }
 
@@ -321,7 +368,11 @@ async function putPart(
     if (status !== 403 && status !== 400) {
       throw error;
     }
-    urls.delete(part.number);
+    // Evict EVERY cached URL, not just this one. Presigned URLs are minted in
+    // forward batches with a shared expiry, so one expiring means the rest of
+    // the batch has too; dropping only the failing part would pay a 403 plus a
+    // refresh round trip for every remaining part instead of once.
+    urls.clear();
     await ensureUrls(client, videoId, uploadId, urls, totalParts, [part.number]);
     const refreshed = urls.get(part.number);
     if (refreshed === undefined) {

@@ -47,8 +47,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Pulls `field: description` pairs out of a Connect error's `details`.
  *
- * protovalidate failures ride there, and they are the difference between
- * "invalid_argument" and "app_id must match ^app_[a-zA-Z0-9_-]+$".
+ * The shape matters and is easy to get wrong. connect-go serialises each entry
+ * in `details` as `{type, value: "<base64 proto>", debug: {…}}`, where `debug`
+ * is the protojson of the message — so the violations live at
+ * `detail.debug.fieldViolations`, in protojson's camelCase, NOT at the top
+ * level of the entry and NOT in the API's own snake_case wire casing. connect
+ * uses its own default protojson codec for `debug`, not the API's codec.
+ *
+ * Only the API's *domain* errors attach a detail at all. protovalidate
+ * failures carry none — the interceptor flattens every violation into the
+ * message and into the `x-validation-fields` response header, which is why
+ * `describeApiError` reads that header separately.
  */
 function fieldViolations(body: Record<string, unknown>): string[] {
   const details = body.details;
@@ -61,7 +70,10 @@ function fieldViolations(body: Record<string, unknown>): string[] {
     if (!isRecord(detail)) {
       continue;
     }
-    const violations = detail.field_violations ?? detail.fieldViolations;
+    // `debug` is where connect-go puts the decoded message; the top level is
+    // accepted too so a proxy that rewrote the envelope still parses.
+    const debug = isRecord(detail.debug) ? detail.debug : detail;
+    const violations = debug.fieldViolations ?? debug.field_violations;
     if (!Array.isArray(violations)) {
       continue;
     }
@@ -107,9 +119,18 @@ export function describeApiError(
 
   let message =
     typeof parsed.message === 'string' && parsed.message ? parsed.message : fallback.message;
+
   const violations = fieldViolations(parsed);
   if (violations.length > 0) {
     message = `${message} (${violations.join('; ')})`;
+  } else {
+    // protovalidate rejections attach no detail at all — the offending field
+    // paths ride this header instead. The message already names them, so this
+    // is only appended when it would add something.
+    const fields = headers?.get('x-validation-fields') ?? '';
+    if (fields !== '' && !message.includes(fields.split(',')[0])) {
+      message = `${message} (fields: ${fields})`;
+    }
   }
 
   return { code, message, statusCode };

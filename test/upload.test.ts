@@ -193,6 +193,39 @@ describe('uploadVideo', () => {
     assert.equal(server.aborted.length, 1);
   });
 
+  it('destroys the source stream on the failure path, not just on success', async () => {
+    // The chunk reader drives the iterator by hand, so `for await`'s implicit
+    // cleanup never runs. Strapi does not clean up either — it only deletes
+    // file.stream after a successful await — and the source is a read stream
+    // over a temp file, so an abandoned stream pins a file descriptor.
+    const { config, client } = await harness({ expirePartsOnce: [1, 1] });
+    const bytes = pattern(PART + 10);
+    const stream = chunkedStream(bytes, 4096);
+
+    await assert.rejects(uploadVideo(config, client, makeVideoFile(bytes), { stream }));
+    assert.equal(stream.destroyed, true);
+  });
+
+  it('destroys the source stream on the success path too', async () => {
+    const { config, client } = await harness();
+    const bytes = pattern(PART + 10);
+    const stream = chunkedStream(bytes, 4096);
+
+    await uploadVideo(config, client, makeVideoFile(bytes), { stream });
+    assert.equal(stream.destroyed, true);
+  });
+
+  it('deletes an orphaned video when the create response carries no upload id', async () => {
+    const { server, config, client } = await harness({ omitUploadId: true });
+    const bytes = pattern(1024);
+
+    await assert.rejects(
+      uploadVideo(config, client, makeVideoFile(bytes), { buffer: bytes }),
+      /did not return a video id and upload id/,
+    );
+    assert.equal(server.deleted.length, 1, 'the half-made video was removed');
+  });
+
   it('refuses a file over the 5 GiB API ceiling before creating anything', async () => {
     const { server, config, client } = await harness();
     const file = makeFile({ size: 6_000_000_000 / 1000, sizeInBytes: 6_000_000_000 });

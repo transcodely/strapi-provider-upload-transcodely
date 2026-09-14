@@ -62,9 +62,22 @@ describe('resolveConfig', () => {
     assert.equal(normalizeBaseUrl('https://api.example.com/', DEFAULT_BASE_URL), 'https://api.example.com');
     assert.equal(normalizeBaseUrl('', DEFAULT_BASE_URL), DEFAULT_BASE_URL);
     assert.throws(() => normalizeBaseUrl('ftp://x', DEFAULT_BASE_URL), /not an http\(s\) URL/);
+    assert.throws(() => normalizeBaseUrl('not a url', DEFAULT_BASE_URL), /not a valid URL/);
   });
 
-  it('normalizes extra video extensions to a leading dot, lowercased', () => {
+  it('refuses plain HTTP off loopback, because the API key rides every request', () => {
+    assert.throws(() => normalizeBaseUrl('http://api.example.com', DEFAULT_BASE_URL), /plain HTTP/);
+    // A local mock or dev stack stays usable.
+    assert.equal(normalizeBaseUrl('http://127.0.0.1:8080', DEFAULT_BASE_URL), 'http://127.0.0.1:8080');
+    assert.equal(normalizeBaseUrl('http://localhost:1337', DEFAULT_BASE_URL), 'http://localhost:1337');
+  });
+
+  it('treats the containers that sniff as octet-stream as video by default', () => {
+    const config = resolveConfig({ apiKey: 'ak_test' });
+    assert.deepEqual(config.videoExtensions, ['.mkv', '.m2ts', '.mts', '.ts', '.mxf']);
+  });
+
+  it('normalizes configured video extensions to a leading dot, lowercased', () => {
     const config = resolveConfig({ apiKey: 'ak_test', videoExtensions: ['MKV', '.TS', '  '] });
     assert.deepEqual(config.videoExtensions, ['.mkv', '.ts']);
   });

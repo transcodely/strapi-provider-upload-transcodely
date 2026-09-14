@@ -54,7 +54,10 @@ export interface TranscodelyProviderOptions {
   private?: boolean;
   /** Extra MIME prefixes treated as video, beyond `video/`. */
   videoMimePrefixes?: string[];
-  /** Extra file extensions treated as video (with or without the leading dot). */
+  /**
+   * File extensions treated as video regardless of MIME type, with or without
+   * the leading dot. Replaces the default list, it does not add to it.
+   */
   videoExtensions?: string[];
   /** Part size for multipart uploads. Defaults to 25 MiB, minimum 5 MiB. */
   partSizeBytes?: number;
@@ -104,19 +107,55 @@ export interface ResolvedConfig {
 const VISIBILITIES: Visibility[] = ['public', 'unlisted', 'private'];
 const URL_KINDS: PlaybackUrlKind[] = ['player', 'hls'];
 
+/**
+ * Containers whose MIME type cannot be relied on to start with `video/`.
+ *
+ * An empty default was the wrong call: a file that sniffs as
+ * `application/octet-stream` lands silently on the disk provider and the editor
+ * gets a broken link with no error anywhere. These are the extensions where
+ * that actually happens.
+ */
+const DEFAULT_VIDEO_EXTENSIONS = ['.mkv', '.m2ts', '.mts', '.ts', '.mxf'];
+
 function configError(message: string): TranscodelyUploadError {
   return new TranscodelyUploadError(`strapi-provider-upload-transcodely: ${message}`, {
     code: 'invalid_provider_config',
   });
 }
 
-/** Strips a trailing slash so URLs can be composed by concatenation. */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+/**
+ * Validates a base URL and strips its trailing slash so URLs compose by
+ * concatenation.
+ *
+ * Plain HTTP is refused off-loopback: the API key rides an `Authorization`
+ * header on every request, so a typo'd or deliberately plaintext `baseUrl`
+ * would put a secret credential on the wire in the clear. Loopback stays
+ * allowed for a local mock or a dev stack, which is also what this package's
+ * own tests run against.
+ */
 export function normalizeBaseUrl(value: string | undefined, fallback: string): string {
   const raw = (value ?? '').trim();
   const base = raw === '' ? fallback : raw;
-  if (!/^https?:\/\//i.test(base)) {
+
+  let parsed: URL;
+  try {
+    parsed = new URL(base);
+  } catch {
+    throw configError(`"${base}" is not a valid URL`);
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
     throw configError(`"${base}" is not an http(s) URL`);
   }
+  if (parsed.protocol === 'http:' && !LOOPBACK_HOSTS.has(parsed.hostname)) {
+    throw configError(
+      `"${base}" is plain HTTP. The API key is sent on every request, so an https:// URL is ` +
+        'required for any host but loopback.',
+    );
+  }
+
   return base.replace(/\/+$/, '');
 }
 
@@ -187,7 +226,9 @@ export function resolveConfig(options: TranscodelyProviderOptions = {}): Resolve
     videoMimePrefixes: ['video/', ...(options.videoMimePrefixes ?? [])].map((p) =>
       p.trim().toLowerCase(),
     ),
-    videoExtensions: (options.videoExtensions ?? []).map(normalizeExtension).filter((e) => e !== ''),
+    videoExtensions: (options.videoExtensions ?? DEFAULT_VIDEO_EXTENSIONS)
+      .map(normalizeExtension)
+      .filter((e) => e !== ''),
     partSizeBytes,
     uploadConcurrency: positiveInt(options.uploadConcurrency, 3, 'uploadConcurrency'),
     requestTimeoutMs: positiveInt(options.requestTimeoutMs, 60_000, 'requestTimeoutMs'),

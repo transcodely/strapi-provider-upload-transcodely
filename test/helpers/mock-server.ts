@@ -49,6 +49,10 @@ export interface MockServerOptions {
   expirePartsOnce?: number[];
   /** Fail `CreateMultipartUpload` unless an app_id is present. */
   requireAppId?: boolean;
+  /** Answer `CreateMultipartUpload` with a video but no upload id. */
+  omitUploadId?: boolean;
+  /** Extra fields merged onto the video `CompleteMultipartUpload` returns. */
+  completedVideoFields?: Record<string, unknown>;
 }
 
 export interface MockServer {
@@ -148,19 +152,18 @@ export async function startMockServer(options: MockServerOptions = {}): Promise<
 
       case 'VideoService/CreateMultipartUpload': {
         if (options.requireAppId && !body.app_id) {
+          // The real protovalidate rejection: no `details` at all, the field
+          // paths flattened into the message and repeated on the
+          // `x-validation-fields` header. See the api's validation
+          // interceptor.
           send(
             res,
             400,
             {
               code: 'invalid_argument',
-              message: 'validation failed',
-              details: [
-                {
-                  field_violations: [{ field: 'app_id', description: 'value is required' }],
-                },
-              ],
+              message: 'validation failed: app_id: value is required',
             },
-            { 'error-code': 'parameter_required' },
+            { 'x-validation-fields': 'app_id' },
           );
           return;
         }
@@ -182,7 +185,7 @@ export async function startMockServer(options: MockServerOptions = {}): Promise<
         }
         send(res, 200, {
           video,
-          upload_id: uploadId,
+          upload_id: options.omitUploadId ? undefined : uploadId,
           parts,
           urls_expire_at: new Date(Date.now() + 3_600_000).toISOString(),
         });
@@ -231,6 +234,7 @@ export async function startMockServer(options: MockServerOptions = {}): Promise<
         const video = videos.get(upload.videoId)!;
         video.status = 'processing';
         video.job_id = `job_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+        Object.assign(video, options.completedVideoFields ?? {});
         uploads.delete(body.upload_id);
         send(res, 200, { video });
         return;

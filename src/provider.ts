@@ -155,9 +155,36 @@ export function init(options: TranscodelyProviderOptions = {}): StrapiUploadProv
     file.url = resolved.url;
     file.provider_metadata = metadata;
 
-    // A freshly completed upload has no poster yet — the worker generates it
-    // during the transcode — so this is normally skipped and `previewUrl` stays
-    // empty. It fires for the paths that do hand back a ready video.
+    // Everything below exists for the admin media library, and normally does
+    // nothing at upload time, because none of it exists until the transcode
+    // finishes. See "Media library preview" in the README: the admin card
+    // renders `<video src={createAssetUrl(asset, true)}>`, and that helper
+    // prefers `formats.thumbnail.url` over `url`. So the ONE thing that makes
+    // the card render is a progressive MP4 in `formats.thumbnail.url` — a
+    // poster JPEG there would not play either, and neither would an HLS
+    // manifest outside Safari. The animated hover preview is exactly that MP4,
+    // and it is free.
+    const previewMp4 = video.hover_preview_mp4_url;
+    if (typeof previewMp4 === 'string' && previewMp4 !== '') {
+      file.formats = {
+        ...(file.formats ?? {}),
+        thumbnail: {
+          name: `thumbnail_${file.name}`,
+          hash: `thumbnail_${file.hash}`,
+          ext: '.mp4',
+          mime: 'video/mp4',
+          url: previewMp4,
+          // Stamped so getSignedUrl routes this format to the video side:
+          // Strapi signs each format object separately, and a format with no
+          // metadata would be handed to the fallback provider, which has never
+          // heard of this key.
+          provider_metadata: metadata,
+        },
+      };
+    }
+
+    // `previewUrl` is read by REST/GraphQL consumers, never by the admin — the
+    // string does not appear anywhere in @strapi/upload's admin bundle.
     const poster = video.poster_url;
     if (typeof poster === 'string' && poster !== '') {
       file.previewUrl = poster;
@@ -225,25 +252,53 @@ export function init(options: TranscodelyProviderOptions = {}): StrapiUploadProv
     },
 
     /**
-     * Rejects a file Transcodely would refuse anyway, before any bytes move.
+     * Rejects a file Transcodely would refuse anyway, before any bytes move —
+     * and, just as importantly, keeps enforcing Strapi's own limit.
      *
-     * Strapi's own limit (`plugin::upload.sizeLimit`) still applies to every
-     * file; this only adds the API's hard 5 GiB ceiling for videos.
+     * Strapi installs its default size check as the PROTOTYPE of the live
+     * provider (`Object.assign(Object.create(baseProvider), wrappedProvider)`),
+     * so defining `checkFileSize` at all shadows it. Delegating a non-video to
+     * `fallback.checkFileSize?.()` therefore turns the limit off entirely for
+     * any fallback that does not implement the method — and
+     * `@strapi/provider-upload-aws-s3` does not. So the base rule is
+     * reimplemented here rather than delegated into a hole.
      */
     checkFileSize(file: StrapiFile, options?: CheckFileSizeOptions): void {
+      // Two size fields, two different jobs.
+      //
+      // `strapiBytes` mirrors Strapi's own rule exactly — `kbytesToBytes(file.size)`,
+      // which is `size * 1000` — so standing in for the base check can never
+      // accept or reject a file differently from stock Strapi.
+      //
+      // `exactBytes` is the byte count this provider will actually declare to
+      // the API as `size_bytes`, and it is what the API's ceiling is compared
+      // against. The two agree for any file Strapi built normally.
+      const strapiBytes =
+        typeof file.size === 'number' && file.size > 0
+          ? Math.round(file.size * 1000)
+          : (file.sizeInBytes ?? 0);
+      const exactBytes =
+        typeof file.sizeInBytes === 'number' && file.sizeInBytes > 0
+          ? file.sizeInBytes
+          : strapiBytes;
+
       if (!isVideoFile(config, file)) {
-        fallback.checkFileSize?.(file, options);
+        if (typeof fallback.checkFileSize === 'function') {
+          fallback.checkFileSize(file, options);
+          return;
+        }
+        // Strapi's own baseProvider rule, verbatim in effect.
+        const limit = options?.sizeLimit;
+        if (limit !== undefined && limit > 0 && strapiBytes > limit) {
+          throw payloadTooLarge(`${file.name} exceeds the ${limit}-byte upload size limit`);
+        }
         return;
       }
 
-      // `file.size` is kilobytes; `sizeLimit` is bytes.
-      const bytes =
-        typeof file.sizeInBytes === 'number' && file.sizeInBytes > 0
-          ? file.sizeInBytes
-          : Math.round((file.size ?? 0) * 1000);
-
+      // A video is capped by Strapi's limit AND by the API's hard ceiling,
+      // whichever is tighter.
       const limit = Math.min(options?.sizeLimit ?? MAX_UPLOAD_BYTES, MAX_UPLOAD_BYTES);
-      if (bytes > limit) {
+      if (Math.max(strapiBytes, exactBytes) > limit) {
         throw payloadTooLarge(
           `${file.name} is larger than the ${limit}-byte limit for video uploads`,
         );
@@ -253,28 +308,49 @@ export function init(options: TranscodelyProviderOptions = {}): StrapiUploadProv
     /**
      * True when stored URLs must not be served as-is.
      *
-     * Set `private: true` for an app with CDN token auth enabled, or one whose
-     * videos are created `private`: in both cases the usable URL is signed and
-     * expiring, and Strapi has to ask for a fresh one on every read. It is off
-     * by default because the default `playbackUrlKind` is the player page,
-     * which is a stable URL that re-signs itself on load.
+     * Strapi has exactly ONE answer for the whole provider: `signFileUrls`
+     * gates signing for every file — video and image alike — on a single
+     * `await provider.isPrivate()`. So this must be the OR of both halves. A
+     * private `aws-s3` fallback bucket answering true while this returned only
+     * the Transcodely flag meant Strapi never asked to sign an image, and every
+     * image 403'd with nothing logged anywhere.
+     *
+     * `config.private` covers the Transcodely half: set it for an app with CDN
+     * token auth enabled, or one whose videos are created `private`, where the
+     * usable URL is signed and expiring.
      */
     isPrivate(): boolean {
-      return config.private;
+      if (config.private) {
+        return true;
+      }
+      try {
+        return fallback.isPrivate?.() === true;
+      } catch {
+        // A fallback that throws here must not take the upload path with it.
+        return false;
+      }
     },
 
     /**
-     * Returns a URL that works right now.
+     * Returns a URL that works right now, resolved by whichever half owns the
+     * file.
      *
-     * Strapi calls this for every read while `isPrivate()` is true, which is
-     * also what lets a record written while the video was still processing pick
-     * up its real manifest URL once the video is ready.
+     * Strapi calls this for every file in every response while `isPrivate()` is
+     * true — including when it is true only because the fallback said so. The
+     * `config.private` short-circuit below is what keeps that from costing a
+     * `VideoService/Get` per video on a media-library page whose videos never
+     * needed signing in the first place.
      */
     async getSignedUrl(file: StrapiFile): Promise<{ url: string }> {
       const metadata = providerMetadata(file);
       if (metadata === undefined) {
         const signed = await fallback.getSignedUrl?.(file);
         return { url: signed?.url ?? file.url ?? '' };
+      }
+
+      // A hosted video that needs no signing already holds its permanent URL.
+      if (!config.private) {
+        return { url: file.url ?? playerPageUrl(config, metadata.video_id) };
       }
 
       const video = await client.getVideo(metadata.video_id);

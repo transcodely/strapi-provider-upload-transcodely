@@ -42,11 +42,24 @@ export function resolveProviderModule(
   }
 
   const name = provider.toLowerCase();
+
+  // Resolve from the STRAPI PROJECT, not from this package. The fallback (by
+  // default `@strapi/provider-upload-local`) is a dependency of
+  // `@strapi/upload`, never of this package, so a resolution that walks only
+  // this package's own node_modules chain finds it by accident under npm's
+  // hoisting and not at all under pnpm's isolated layout or Yarn PnP. The
+  // operator would then be told to install something they already have.
+  const searchPaths = [process.cwd(), ...(module.paths ?? [])];
+  const candidates = [`@strapi/provider-upload-${name}`, name];
+
   let modulePath = name;
-  try {
-    modulePath = require.resolve(`@strapi/provider-upload-${name}`);
-  } catch {
-    modulePath = name;
+  for (const candidate of candidates) {
+    try {
+      modulePath = require.resolve(candidate, { paths: searchPaths });
+      break;
+    } catch {
+      // Try the next spelling; the last failure is reported below.
+    }
   }
 
   let loaded: unknown;

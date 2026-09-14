@@ -31,6 +31,8 @@ export interface VideoResource {
   playback_url?: string;
   embed_url?: string;
   poster_url?: string;
+  hover_preview_url?: string;
+  hover_preview_mp4_url?: string;
   duration_seconds?: number;
   [key: string]: unknown;
 }
@@ -184,7 +186,10 @@ export class TranscodelyClient {
     try {
       response = await this.config.fetch(url, {
         method: 'PUT',
-        body: new Uint8Array(body),
+        // The Buffer goes in as-is. `new Uint8Array(buffer)` COPIES, which
+        // would double this upload's peak memory to partSize x concurrency x 2;
+        // fetch accepts any ArrayBufferView, and a Buffer is one.
+        body,
         signal: controller.signal,
       });
     } catch (cause) {
