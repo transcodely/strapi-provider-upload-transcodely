@@ -106,7 +106,7 @@ module.exports = [
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `apiKey` | string | — | **Required.** Secret app-scoped API key. Must start with `ak_`; any other credential is refused at boot. |
-| `appId` | string | read from your latest job | App the videos are created under (`app_…`). Needed today only if the account has never run a job, see below. |
+| `appId` | string | the key's app | App the videos are created under (`app_…`). Optional: only pins a specific app. See below. |
 | `baseUrl` | string | `https://api.transcodely.com` | API base URL. |
 | `playerBaseUrl` | string | `https://play.transcodely.com` | Base for composed player-page URLs. |
 | `visibility` | `public` \| `unlisted` \| `private` | the app's default | Visibility of created videos. Leave unset to use the app's `default_visibility` (itself `unlisted` when unset). |
@@ -126,16 +126,17 @@ module.exports = [
 
 ### The app id
 
-**Today: set `appId` if your account has never run a job.** Everyone else can leave it out.
+**You do not need one.** An `ak_` key belongs to exactly one app, and since Transcodely API 5.20.0 the
+upload endpoints resolve that app from the key. The provider sends no `app_id`, so the quick-start
+config above is complete.
 
-The provider sends no `app_id`. The Transcodely API currently still requires one on the upload
-endpoints, so it answers that first call with a validation error — and the provider recovers by
-reading your app off your most recent job, caching it, and carrying on. You will not notice, and it
-costs one extra request per Strapi boot.
+Set `appId` only to pin a specific app. If it names an app other than the key's, the API refuses the
+upload with `permission_denied`.
 
-The exception is an account with **no jobs at all**, where there is nothing to read the app from.
-(The provider reads two jobs rather than one and refuses if they name different apps, so it never
-guesses.) That upload fails with:
+**Older API deployments (before 5.20.0).** The upload endpoints there still require an app id. The
+provider recovers by reading your app off your most recent job (it reads two jobs and refuses if they
+name different apps, so it never guesses), caches it, and carries on. That costs one extra request
+per Strapi boot. An account with no jobs at all has nothing to read it from, and the upload fails with:
 
 ```
 This Transcodely deployment still requires an app id, and the account has no job to read one
@@ -151,10 +152,8 @@ providerOptions: {
 },
 ```
 
-**From API 5.20.0** the upload endpoints resolve the app from the key on their own, an `ak_` key
-naming exactly one app. The key-only call then succeeds outright, nothing is ever probed, and
-`appId` becomes purely a way to pin a specific app. The recovery path above will be deleted in a
-later release of this provider, once 5.20.0 is everywhere.
+Hosted Transcodely is on 5.20.0 or newer, so this applies only to older self-run deployments. The
+recovery path will be deleted in a later release of this provider.
 
 ### Keeping images on the local provider
 
